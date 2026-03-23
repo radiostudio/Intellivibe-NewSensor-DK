@@ -44,8 +44,9 @@ LOG_MODULE_REGISTER(AUDIO, CONFIG_LOG_DEFAULT_LEVEL);
 //******************************************************************************
 // FILE SCOPE VARIABLES
 //******************************************************************************
-static int16_t  m_PdmBuffer[AUDIO_SAMPLES_PER_FRAME];
-static uint16_t m_NoiseSpl;
+static nrfx_pdm_t    m_PdmInstance = NRFX_PDM_INSTANCE(0);
+static int16_t       m_PdmBuffer[AUDIO_SAMPLES_PER_FRAME];
+static uint16_t      m_NoiseSpl;
 static volatile bool m_DataReady;
 
 //******************************************************************************
@@ -81,7 +82,7 @@ int Audio_Init(void)
     PdmCfg.gain_l         = AUDIO_PDM_GAIN;
     PdmCfg.gain_r         = AUDIO_PDM_GAIN;
 
-    Err = nrfx_pdm_init(&PdmCfg, Audio_PdmHandler);
+    Err = nrfx_pdm_init(&m_PdmInstance, &PdmCfg, Audio_PdmHandler);
     if (Err != NRFX_SUCCESS)
     {
         LOG_ERR("PDM init failed: 0x%08X", Err);
@@ -118,14 +119,14 @@ int Audio_Read(void)
     m_DataReady = false;
 
     /* Set buffer and start PDM capture */
-    Err = nrfx_pdm_buffer_set(m_PdmBuffer, AUDIO_SAMPLES_PER_FRAME);
+    Err = nrfx_pdm_buffer_set(&m_PdmInstance, m_PdmBuffer, AUDIO_SAMPLES_PER_FRAME);
     if (Err != NRFX_SUCCESS)
     {
         LOG_ERR("PDM buffer set failed: 0x%08X", Err);
         return -1;
     }
 
-    Err = nrfx_pdm_start();
+    Err = nrfx_pdm_start(&m_PdmInstance);
     if (Err != NRFX_SUCCESS)
     {
         LOG_ERR("PDM start failed: 0x%08X", Err);
@@ -139,7 +140,7 @@ int Audio_Read(void)
     }
 
     /* Stop PDM */
-    nrfx_pdm_stop();
+    nrfx_pdm_stop(&m_PdmInstance);
 
     /* Compute SPL from captured samples */
     m_NoiseSpl = Audio_ComputeSpl(m_PdmBuffer, AUDIO_SAMPLES_PER_FRAME);
