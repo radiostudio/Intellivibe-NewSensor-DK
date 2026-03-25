@@ -10,7 +10,7 @@
  *
  * GPIO interrupts:
  *   P0.22 - Accel INT1 (IIM-42352 FIFO watermark)
- *   P0.23 - Mag DRDY   (BMM350 data ready)
+ *   P1.00 - Mag DRDY   (BMM350 data ready)
  *
  * Load switches:
  *   P1.13 - PSRAM VDD control (active high)
@@ -33,7 +33,7 @@
 			label = "ACCEL INT1";
 		};
 		MAG_DRDY: MAG_DRDY {
-			gpios = <&gpio0 23 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			gpios = <&gpio1 0 GPIO_ACTIVE_HIGH>;    /* BMM350 INT: active-high push-pull, no pull needed */
 			label = "MAG_DRDY";
 		};
 	};
@@ -47,7 +47,7 @@
 		};
 		button1: button_1 {
 			status = "disabled";
-			gpios = <&gpio0 23 (GPIO_PULL_UP | GPIO_ACTIVE_LOW)>;
+			gpios = <&gpio1 0 GPIO_ACTIVE_HIGH>;    /* matches MAG_DRDY — BMM350 INT pin */
 			label = "Push button 2";
 		};
 	};
@@ -127,7 +127,12 @@ accel_spi: &spi3 {
 
 /* I2C bus (BMM350, TMP112, LTC3335) */
 temp_i2c: &i2c1 {
+	compatible = "nordic,nrf-twim";
 	status = "okay";
+	pinctrl-0 = <&i2c1_default>;
+	pinctrl-1 = <&i2c1_sleep>;
+	pinctrl-names = "default", "sleep";
+	clock-frequency = <I2C_BITRATE_STANDARD>;
 };
 
 /* PSRAM SPI bus (APS6404L-SQH-ZR) */
