@@ -139,7 +139,7 @@ int BLE_Init(void)
 
     k_sem_take(&m_BLEInitOk, K_FOREVER);
 
-    Err = bt_le_adv_start(BT_LE_ADV_CONN, m_AdvData, ARRAY_SIZE(m_AdvData),
+    Err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, m_AdvData, ARRAY_SIZE(m_AdvData),
                           NULL, 0);
     if (Err)
     {
@@ -194,7 +194,7 @@ int BLE_AdvStart(void)
 {
     int Err;
 
-    Err = bt_le_adv_start(BT_LE_ADV_CONN, m_AdvData, ARRAY_SIZE(m_AdvData),
+    Err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, m_AdvData, ARRAY_SIZE(m_AdvData),
                           NULL, 0);
     if (Err)
     {
@@ -394,7 +394,7 @@ static void BLE_OnConnected(struct bt_conn *Conn, uint8_t Err)
         return;
     }
 
-    double ConnInterval = Info.le.interval * 1.25;
+    double ConnInterval = (double)Info.le.interval_us / 1000.0;
     uint16_t SupervisionTimeout = Info.le.timeout * 10;
     LOG_INF("Conn params: interval %.2f ms, latency %d, timeout %d ms",
             ConnInterval, Info.le.latency, SupervisionTimeout);
