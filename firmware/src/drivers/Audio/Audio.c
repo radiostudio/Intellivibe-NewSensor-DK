@@ -120,7 +120,7 @@ static float Audio_PassthroughFilterApply(const NoIirFilter_t *p_Filter,
                                           uint32_t             NumSamples,
                                           float                DcOffset);
 
-static void Audio_ProcessBlock(const void *p_Buffer, uint32_t Size);
+static void Audio_ProcessBlock(void *p_Buffer, uint32_t Size);
 
 /*******************************************************************************
 ********************************************************************************
@@ -358,9 +358,9 @@ Size     - Size of the block in bytes.
 Return:
 None
 *******************************************************************************/
-static void Audio_ProcessBlock(const void *p_Buffer, uint32_t Size)
+static void Audio_ProcessBlock(void *p_Buffer, uint32_t Size)
 {
-    const int16_t *p_Samples  = (const int16_t *)p_Buffer;
+    int16_t       *p_Samples  = (int16_t *)p_Buffer;
     uint32_t       NumSamples = Size / sizeof(int16_t);
     NoIirFilter_t  NoFilter   = { .NumSos = 0, .Gain = 1.0f };
     float          DcSum      = 0.0f;
@@ -382,7 +382,7 @@ static void Audio_ProcessBlock(const void *p_Buffer, uint32_t Size)
     // Stage 2: Passthrough filter with DC removal — returns sum of squares
     SumSq = Audio_PassthroughFilterApply(&NoFilter,
                                          p_Samples,
-                                         (int16_t *)p_Samples,
+                                         p_Samples,
                                          NumSamples,
                                          DcOffset);
 
