@@ -139,7 +139,7 @@ int BLE_Init(void)
 
     k_sem_take(&m_BLEInitOk, K_FOREVER);
 
-    Err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, m_AdvData, ARRAY_SIZE(m_AdvData),
+    Err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, m_AdvData, ARRAY_SIZE(m_AdvData),
                           NULL, 0);
     if (Err)
     {
@@ -194,7 +194,7 @@ int BLE_AdvStart(void)
 {
     int Err;
 
-    Err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, m_AdvData, ARRAY_SIZE(m_AdvData),
+    Err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_2, m_AdvData, ARRAY_SIZE(m_AdvData),
                           NULL, 0);
     if (Err)
     {

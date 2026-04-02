@@ -38,7 +38,6 @@ extern "C" {
 int      Audio_Init(void);
 int      Audio_Read(void);
 uint16_t Audio_GetNoiseSpl(void);
-void     Audio_Stop(void);
 
 #ifdef __cplusplus
 }
