@@ -247,7 +247,9 @@ int Accel_ReadData(AccelRawData_t *Data, AccelConfig_t *Config)
             {
                 continue;
             }
-            FifoCount = ((uint16_t)FifoCountBuf[0] << 8) | FifoCountBuf[1];
+            /* FIFO count register returns bytes — convert to samples */
+            FifoCount = (((uint16_t)FifoCountBuf[0] << 8) | FifoCountBuf[1])
+                        / ACCEL_FIFO_PACKET_SIZE;
 
             /* Limit to watermark chunk */
             if (FifoCount > ACCEL_FIFO_WM_SAMPLES)
@@ -268,12 +270,15 @@ int Accel_ReadData(AccelRawData_t *Data, AccelConfig_t *Config)
             {
                 uint16_t Offset = i * ACCEL_FIFO_PACKET_SIZE;
 
-                Data[SampleCount].XValue = (int16_t)((FifoBuf[Offset + 1] << 8) |
-                                                      FifoBuf[Offset + 2]);
-                Data[SampleCount].YValue = (int16_t)((FifoBuf[Offset + 3] << 8) |
-                                                      FifoBuf[Offset + 4]);
-                Data[SampleCount].ZValue = (int16_t)((FifoBuf[Offset + 5] << 8) |
-                                                      FifoBuf[Offset + 6]);
+                /* IIM-42352 FIFO: LSB first (little-endian) per byte pair */
+                Data[SampleCount].XValue = (int16_t)((FifoBuf[Offset + 2] << 8) |
+                                                      FifoBuf[Offset + 1]);
+                Data[SampleCount].YValue = (int16_t)((FifoBuf[Offset + 4] << 8) |
+                                                      FifoBuf[Offset + 3]);
+                Data[SampleCount].ZValue = (int16_t)((FifoBuf[Offset + 6] << 8) |
+                                                      FifoBuf[Offset + 5]);
+
+
                 SampleCount++;
             }
         }
@@ -720,24 +725,24 @@ static int Accel_ConfigureFifo(void)
         return Ret;
     }
 
-    /* FIFO_CONFIG1: enable accel data in FIFO */
-    RegVal = ACCEL_FIFO_ACCEL_EN;
+    /* FIFO_CONFIG1: enable accel + temp (8-byte packets: header+accel+temp) */
+    RegVal = ACCEL_FIFO_ACCEL_EN | ACCEL_FIFO_TEMP_EN;
     Ret = Accel_WriteRegister(ACCEL_REG_FIFO_CONFIG1, &RegVal, 1);
     if (Ret)
     {
         return Ret;
     }
 
-    /* FIFO watermark: 86 samples (low byte) */
-    RegVal = ACCEL_FIFO_WM_SAMPLES & 0xFF;
+    /* FIFO watermark: 86 samples x 8 bytes = 688 bytes (register is in bytes) */
+    RegVal = ACCEL_FIFO_WM_BYTES & 0xFF;
     Ret = Accel_WriteRegister(ACCEL_REG_FIFO_CONFIG2, &RegVal, 1);
     if (Ret)
     {
         return Ret;
     }
 
-    /* FIFO watermark high byte */
-    RegVal = (ACCEL_FIFO_WM_SAMPLES >> 8) & 0x0F;
+    /* FIFO watermark high nibble */
+    RegVal = (ACCEL_FIFO_WM_BYTES >> 8) & 0x0F;
     Ret = Accel_WriteRegister(ACCEL_REG_FIFO_CONFIG3, &RegVal, 1);
     if (Ret)
     {
