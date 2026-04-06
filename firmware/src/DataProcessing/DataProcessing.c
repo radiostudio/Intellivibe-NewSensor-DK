@@ -187,6 +187,12 @@ static void DataProc_PrepareInput(AccelRawData_t *RawData, uint16_t SampleCount,
     float InvSensitivity = 1.0f / Sensitivity;
     float Mean = 0.0f;
 
+    /* Cap to FFT input length to prevent overflow */
+    if (SampleCount > DATAPROC_ACCEL_FFT_LEN)
+    {
+        SampleCount = DATAPROC_ACCEL_FFT_LEN;
+    }
+
     /* Convert raw counts to g */
     for (Idx = 0; Idx < SampleCount; Idx++)
     {

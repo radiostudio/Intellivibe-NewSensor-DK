@@ -32,7 +32,7 @@ extern "C" {
 //******************************************************************************
 
 /* ── Device identification ── */
-#define ACCEL_WHO_AM_I_VAL          0x67
+#define ACCEL_WHO_AM_I_VAL          0x6D
 
 /* ── SPI protocol ── */
 #define ACCEL_SPI_READ              0x80
@@ -137,7 +137,7 @@ extern "C" {
 #define ACCEL_SENSITIVITY_16G       2048.0f
 
 /* ── Buffer sizes ── */
-#define ACCEL_RAW_BUFFER_LEN        3300
+#define ACCEL_RAW_BUFFER_LEN        4900
 #define ACCEL_STREAM_BUFFER_LEN     200
 
 //******************************************************************************
