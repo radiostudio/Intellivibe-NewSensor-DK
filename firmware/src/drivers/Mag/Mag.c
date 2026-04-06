@@ -150,14 +150,6 @@ int Mag_Init(void)
         return -1;
     }
 
-    /* Configure interrupt GPIO */
-    Ret = Mag_GpioInit();
-    if (Ret)
-    {
-        LOG_ERR("GPIO init failed: %d", Ret);
-        return -1;
-    }
-
     /* Validate chip ID */
     Ret = Mag_ReadChipId();
     if (Ret)
@@ -223,6 +215,14 @@ int Mag_Init(void)
     if (Ret)
     {
         LOG_ERR("Interrupt config failed: %d", Ret);
+        return -1;
+    }
+
+    /* Configure interrupt GPIO — called after sensor is fully initialised and set */
+    Ret = Mag_GpioInit();
+    if (Ret)
+    {
+        LOG_ERR("GPIO init failed: %d", Ret);
         return -1;
     }
 
@@ -722,7 +722,7 @@ static int32_t Mag_ConvertRaw24Bit(uint8_t Xlsb, uint8_t Lsb, uint8_t Msb)
     RawVal = ((int32_t)Msb << 16) | ((int32_t)Lsb << 8) | (int32_t)Xlsb;
 
     /* Sign-extend from bit 23 — BMM350 uses full 24-bit signed value (no right-shift) */
-    if (RawVal & (1 << 23))
+    if (RawVal & (1U << 23))
     {
         RawVal |= (int32_t)0xFF000000;
     }
@@ -843,9 +843,9 @@ static int Mag_LoadCalibration(void)
                (OtpData[MAG_OTP_IDX_OFF_Y] & 0x00FF);
     OffZWord = (OtpData[MAG_OTP_IDX_OFF_Y] & 0x0F00) +
                (OtpData[MAG_OTP_IDX_OFF_Z_SENS_X] & 0x00FF);
-    m_MagCal.OffX = (float)Mag_FixSign(OffXWord, 12);
-    m_MagCal.OffY = (float)Mag_FixSign(OffYWord, 12);
-    m_MagCal.OffZ = (float)Mag_FixSign(OffZWord, 12);
+    m_MagCal.OffX = (float)Mag_FixSign(OffXWord, 12) * MAG_UT_PER_LSB_XY;
+    m_MagCal.OffY = (float)Mag_FixSign(OffYWord, 12) * MAG_UT_PER_LSB_XY;
+    m_MagCal.OffZ = (float)Mag_FixSign(OffZWord, 12) * MAG_UT_PER_LSB_Z;
 
     /* Sensitivity — 8-bit signed, divide by 256 */
     m_MagCal.SensX = (float)Mag_FixSign((OtpData[MAG_OTP_IDX_OFF_Z_SENS_X] & 0xFF00) >> 8, 8) / 256.0f;
