@@ -6,7 +6,7 @@
  *   SPI3 - IIM-42352 accelerometer (4 MHz, CS P0.11)
  *   SPI2 - APS6404L PSRAM (10 MHz, CS P1.11)
  *   I2C1 - BMM350 magnetometer, TMP112 temperature, LTC3335 coulomb counter
- *   PDM  - MMICT5838 microphone (configured via nrfx, pins P1.05 CLK / P1.04 DIN)
+ *   PDM  - T5838 microphone via Zephyr DMIC API (pins P1.06 CLK / P1.04 DIN)
  *
  * GPIO interrupts:
  *   P0.22 - Accel INT1 (IIM-42352 FIFO watermark)
@@ -110,6 +110,21 @@
 			low-power-enable;
 		};
 	};
+
+	pdm0_default: pdm0_default {
+		group1 {
+			psels = <NRF_PSEL(PDM_CLK, 1, 6)>,
+			        <NRF_PSEL(PDM_DIN, 1, 4)>;
+		};
+	};
+
+	pdm0_sleep: pdm0_sleep {
+		group1 {
+			psels = <NRF_PSEL(PDM_CLK, 1, 6)>,
+			        <NRF_PSEL(PDM_DIN, 1, 4)>;
+			low-power-enable;
+		};
+	};
 };
 
 /* Accelerometer SPI bus (IIM-42352) */
@@ -147,4 +162,16 @@ psram_spi: &spi2 {
 	reg_psram_spi: spi-dev@0 {
 		reg = <0>;
 	};
+};
+
+/* T5838 PDM microphone — Zephyr DMIC API (CONFIG_AUDIO_DMIC=y)
+ * SELECT pin tied to GND → RIGHT channel → rising clock edge → PDM_CHAN_RIGHT
+ * CLK: P1.06  DIN: P1.04
+ */
+dmic_dev: &pdm0 {
+	status = "okay";
+	pinctrl-0 = <&pdm0_default>;
+	pinctrl-1 = <&pdm0_sleep>;
+	pinctrl-names = "default", "sleep";
+	clock-source = "PCLK32M_HFXO";
 };
