@@ -176,6 +176,6 @@ Note(s):
 ## Build
 
 - Target: `nrf5340dk_nrf5340_cpuapp`
-- SDK: NCS v2.6.1 (Zephyr v3.5.99)
-- Toolchain path: `~/ncs/toolchains/2be090971e/`
-- Build command: `west build -b nrf5340dk_nrf5340_cpuapp`
+- SDK: NCS v3.2.3
+- Toolchain: nRF Connect SDK Toolchain v3.2.3
+- Build command: `cd firmware && west build -b nrf5340dk/nrf5340/cpuapp`

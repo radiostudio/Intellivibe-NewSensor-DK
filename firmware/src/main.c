@@ -53,8 +53,7 @@ LOG_MODULE_REGISTER(MAIN, CONFIG_LOG_DEFAULT_LEVEL);
 #define ACCEL_BYTES_PER_SAMPLE  (ACCEL_AXIS_COUNT * sizeof(int16_t))
 #define ACCEL_DEFAULT_ODR_HZ    4000
 
-#define MAG_AXIS_COUNT          3
-#define MAG_BYTES_PER_SAMPLE    (MAG_AXIS_COUNT * sizeof(int32_t))
+#define MAG_BYTES_PER_SAMPLE    sizeof(MagRawData_t)
 #define MAG_DEFAULT_ODR_HZ      400
 #define MAG_DEFAULT_DURATION_S  1
 
@@ -437,9 +436,7 @@ static void Main_ReadAndProcess(void)
     int64_t Start = k_uptime_get();
     SystemSettings_t *Settings = UserConfig_GetSettings();
     AccelConfig_t AccelCfg;
-    MagConfig_t MagCfg;
     uint16_t AccelSampleCount;
-    uint16_t MagSampleCount;
     float Temperature;
     uint8_t BatteryPercent;
 
@@ -465,20 +462,19 @@ static void Main_ReadAndProcess(void)
 
     if (m_SensorState[SENSOR_MAG] == 0)
     {
+        MagConfig_t MagCfg;
+
         MagCfg.SamplingRate = MAG_DEFAULT_ODR_HZ;
         MagCfg.Duration     = MAG_DEFAULT_DURATION_S;
-        MagSampleCount      = MagCfg.SamplingRate * MagCfg.Duration;
 
-        Mag_Active();
         if (Mag_ReadData(m_MagRawBuf, &MagCfg) == 0)
         {
-            Mag_CalculateRms(m_MagRawBuf, MagSampleCount, &m_MagRmsOut);
-            LOG_DBG("Mag RMS: X=%.1f Y=%.1f Z=%.1f uT",
+            Mag_CalculateRms(m_MagRawBuf, MagCfg.SamplingRate * MagCfg.Duration, &m_MagRmsOut);
+            LOG_INF("Mag RMS: X=%.3f Y=%.3f Z=%.3f uT",
                     (double)m_MagRmsOut.XData,
                     (double)m_MagRmsOut.YData,
                     (double)m_MagRmsOut.ZData);
         }
-        Mag_Standby();
     }
 
     if (m_SensorState[SENSOR_TEMP] == 0)
