@@ -99,6 +99,10 @@ static struct gpio_callback  m_IntCbData;
 
 static K_SEM_DEFINE(m_DataReadySem, 0, 1);
 
+/* Private temperature buffer — raw TValue per sample, used only for OTP compensation
+   inside Mag_CalculateRms. Kept here so MagRawData_t stays XYZ-only (public/streaming safe). */
+static int32_t m_TempBuf[MAG_RAW_BUFFER_LEN];
+
 //******************************************************************************
 // LOCAL FUNCTION PROTOTYPES
 //******************************************************************************
@@ -285,11 +289,11 @@ int Mag_ReadData(MagRawData_t *Data, MagConfig_t *Config)
             continue;
         }
 
-        /* Convert 24-bit raw values */
-        Data[SampleCount].XValue = Mag_ConvertRaw24Bit(DataBuf[0], DataBuf[1], DataBuf[2]);
-        Data[SampleCount].YValue = Mag_ConvertRaw24Bit(DataBuf[3], DataBuf[4], DataBuf[5]);
-        Data[SampleCount].ZValue = Mag_ConvertRaw24Bit(DataBuf[6], DataBuf[7], DataBuf[8]);
-        Data[SampleCount].TValue = Mag_ConvertRaw24Bit(DataBuf[9], DataBuf[10], DataBuf[11]);
+        /* Convert 24-bit raw values — temperature stored in private m_TempBuf, not in public struct */
+        Data[SampleCount].XValue  = Mag_ConvertRaw24Bit(DataBuf[0], DataBuf[1], DataBuf[2]);
+        Data[SampleCount].YValue  = Mag_ConvertRaw24Bit(DataBuf[3], DataBuf[4], DataBuf[5]);
+        Data[SampleCount].ZValue  = Mag_ConvertRaw24Bit(DataBuf[6], DataBuf[7], DataBuf[8]);
+        m_TempBuf[SampleCount]    = Mag_ConvertRaw24Bit(DataBuf[9], DataBuf[10], DataBuf[11]);
 
         SampleCount++;
     }
@@ -322,10 +326,10 @@ int Mag_ReadRaw(MagRawData_t *Data)
         return Ret;
     }
 
-    Data->XValue = Mag_ConvertRaw24Bit(DataBuf[0], DataBuf[1], DataBuf[2]);
-    Data->YValue = Mag_ConvertRaw24Bit(DataBuf[3], DataBuf[4], DataBuf[5]);
-    Data->ZValue = Mag_ConvertRaw24Bit(DataBuf[6], DataBuf[7], DataBuf[8]);
-    Data->TValue = Mag_ConvertRaw24Bit(DataBuf[9], DataBuf[10], DataBuf[11]);
+    Data->XValue   = Mag_ConvertRaw24Bit(DataBuf[0], DataBuf[1], DataBuf[2]);
+    Data->YValue   = Mag_ConvertRaw24Bit(DataBuf[3], DataBuf[4], DataBuf[5]);
+    Data->ZValue   = Mag_ConvertRaw24Bit(DataBuf[6], DataBuf[7], DataBuf[8]);
+    m_TempBuf[0]   = Mag_ConvertRaw24Bit(DataBuf[9], DataBuf[10], DataBuf[11]);
 
     return 0;
 }
@@ -463,7 +467,7 @@ void Mag_CalculateRms(MagRawData_t *Data, uint16_t SampleCount, OutputData_t *Ma
         X = (float)Data[Idx].XValue * MAG_UT_PER_LSB_XY;
         Y = (float)Data[Idx].YValue * MAG_UT_PER_LSB_XY;
         Z = (float)Data[Idx].ZValue * MAG_UT_PER_LSB_Z;
-        T = (float)Data[Idx].TValue * MAG_TEMP_DEGC_PER_LSB;
+        T = (float)m_TempBuf[Idx] * MAG_TEMP_DEGC_PER_LSB;
 
         /* Step 2: Fixed raw temperature offset */
         T -= MAG_TEMP_RAW_OFFSET_DEGC;

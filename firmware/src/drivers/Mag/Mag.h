@@ -130,7 +130,6 @@ typedef struct
     int32_t XValue;
     int32_t YValue;
     int32_t ZValue;
-    int32_t TValue;     /* Raw temperature (24-bit signed), used for per-sample OTP compensation */
 } MagRawData_t;
 
 
