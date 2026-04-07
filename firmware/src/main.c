@@ -54,6 +54,12 @@ LOG_MODULE_REGISTER(MAIN, CONFIG_LOG_DEFAULT_LEVEL);
 #define ACCEL_DEFAULT_ODR_HZ    4000
 
 #define MAG_BYTES_PER_SAMPLE    sizeof(MagRawData_t)
+/* Streaming packs each axis as 24-bit (3 bytes): 3 axes × 3 bytes = 9 bytes/sample.
+   At 400 Hz: 400 × 9 = 3600 bytes/sec sent to receiver. */
+#define MAG_STREAM_BYTES_PER_AXIS       3U
+#define MAG_STREAM_AXES                 3U
+#define MAG_STREAM_BYTES_PER_SAMPLE     (MAG_STREAM_AXES * MAG_STREAM_BYTES_PER_AXIS)
+#define MAG_STREAM_SAMPLES_PER_CHUNK    (TX_BUF_SIZE / MAG_STREAM_BYTES_PER_SAMPLE)
 #define MAG_DEFAULT_ODR_HZ      400
 #define MAG_DEFAULT_DURATION_S  1
 
@@ -715,8 +721,10 @@ static void Main_MagStreamCb(struct k_work *Work)
 
     BLENotifyEn_t *NotifyStatus = BLE_GetNotifyStatus();
     MagConfig_t MagCfg;
-    uint32_t BufLen;
-    uint32_t Offset;
+    uint32_t SampleCount;
+    uint32_t SampleIdx    = 0;
+    uint8_t  PackBuf[MAG_STREAM_SAMPLES_PER_CHUNK * MAG_STREAM_BYTES_PER_SAMPLE];
+    uint32_t TotalSent    = 0;
 
     LOG_INF("Mag streaming started");
 
@@ -729,31 +737,48 @@ static void Main_MagStreamCb(struct k_work *Work)
     MagCfg.SamplingRate = MAG_DEFAULT_ODR_HZ;
     MagCfg.Duration     = MAG_DEFAULT_DURATION_S;
 
-    Mag_Active();
-
+    /* Mag_ReadData already calls Mag_Active/Mag_Standby internally */
     if (Mag_ReadData(m_MagRawBuf, &MagCfg) != 0)
     {
         LOG_ERR("Mag stream read failed");
-        Mag_Standby();
         return;
     }
 
-    BufLen = (uint32_t)MagCfg.Duration * MagCfg.SamplingRate * MAG_BYTES_PER_SAMPLE;
-    Offset = 0;
+    /* Pack XYZ as 24-bit (3 bytes each) — temperature not sent.
+       400 samples × 9 bytes = 3600 bytes/sec. */
+    SampleCount = (uint32_t)MagCfg.Duration * MagCfg.SamplingRate;
 
-    while (Offset < BufLen && NotifyStatus->MagStreamingEn)
+    while (SampleIdx < SampleCount && NotifyStatus->MagStreamingEn)
     {
-        uint16_t ChunkLen = (BufLen - Offset > TX_BUF_SIZE)
-                          ? TX_BUF_SIZE : (uint16_t)(BufLen - Offset);
+        uint16_t ChunkSamples = ((SampleCount - SampleIdx) > MAG_STREAM_SAMPLES_PER_CHUNK)
+                              ? MAG_STREAM_SAMPLES_PER_CHUNK
+                              : (uint16_t)(SampleCount - SampleIdx);
+        uint16_t PackLen = 0;
 
-        BLE_SendStreamNotification(BLE_STREAM_SVC_MAG,
-                                   (void *)((uint8_t *)m_MagRawBuf + Offset),
-                                   ChunkLen);
-        Offset += ChunkLen;
+        for (uint16_t i = 0; i < ChunkSamples; i++)
+        {
+            int32_t X = m_MagRawBuf[SampleIdx + i].XValue;
+            int32_t Y = m_MagRawBuf[SampleIdx + i].YValue;
+            int32_t Z = m_MagRawBuf[SampleIdx + i].ZValue;
+
+            PackBuf[PackLen++] = (uint8_t)(X & 0xFF);
+            PackBuf[PackLen++] = (uint8_t)((X >> 8) & 0xFF);
+            PackBuf[PackLen++] = (uint8_t)((X >> 16) & 0xFF);
+
+            PackBuf[PackLen++] = (uint8_t)(Y & 0xFF);
+            PackBuf[PackLen++] = (uint8_t)((Y >> 8) & 0xFF);
+            PackBuf[PackLen++] = (uint8_t)((Y >> 16) & 0xFF);
+
+            PackBuf[PackLen++] = (uint8_t)(Z & 0xFF);
+            PackBuf[PackLen++] = (uint8_t)((Z >> 8) & 0xFF);
+            PackBuf[PackLen++] = (uint8_t)((Z >> 16) & 0xFF);
+        }
+
+        BLE_SendStreamNotification(BLE_STREAM_SVC_MAG, PackBuf, PackLen);
+        SampleIdx  += ChunkSamples;
+        TotalSent  += PackLen;
         k_usleep(INTER_FRAME_SPACE_US);
     }
 
-    Mag_Standby();
-
-    LOG_INF("Mag streaming complete (%u bytes sent)", Offset);
+    LOG_INF("Mag streaming complete (%u bytes sent)", TotalSent);
 }
