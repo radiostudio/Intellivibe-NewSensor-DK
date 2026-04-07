@@ -702,8 +702,8 @@ static void Main_AccelStreamCb(struct k_work *Work)
 /*******************************************************************************
 Description:
 Magnetometer high-speed streaming work callback. Triggered by BLE command
-0x0B or 0x0C. Reads magnetometer data and sends raw data via BLE
-notifications.
+0x0B or 0x0C. Reads magnetometer data and streams it via BLE notifications,
+packed as 24-bit little-endian per axis (3 bytes × 3 axes = 9 bytes/sample).
 
 Argument(s):
 Work - Pointer to the work item (unused).
@@ -712,8 +712,11 @@ Return:
 None
 
 Note(s):
-Reads magnetometer data at 400 Hz, then streams raw data via BLE
-notifications until the buffer is exhausted or the client unsubscribes.
+Reads 400 samples at 400 Hz (1 s acquisition). Each sample is repacked from
+the driver's int32_t fields into 3-byte little-endian per axis before
+transmission — the top byte of each int32_t is sign-extension only and is
+dropped. Total stream: 400 × 9 = 3600 bytes sent as chunks of up to 258 bytes
+until the buffer is exhausted or the client unsubscribes.
 *******************************************************************************/
 static void Main_MagStreamCb(struct k_work *Work)
 {

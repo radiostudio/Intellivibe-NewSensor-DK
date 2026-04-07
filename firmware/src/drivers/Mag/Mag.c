@@ -43,9 +43,12 @@ LOG_MODULE_REGISTER(MAG, CONFIG_LOG_DEFAULT_LEVEL);
 #define MAG_INT_NODE        DT_ALIAS(sw1)
 
 #define MAG_RESET_WAIT_MS   30
-#define MAG_PMU_CMD_WAIT_MS 38                      /* BMM350_SUSPEND_TO_NORMAL_DELAY = 38000 µs */
+#define MAG_SUSPEND_TO_NORMAL_WAIT_MS   38          /* BMM350_SUSPEND_TO_NORMAL_DELAY = 38000 µs */
+#define MAG_NORMAL_TO_SUSPEND_WAIT_MS   1           /* BMM350 Normal→Suspend settling time */
 #define MAG_UPD_OAE_WAIT_MS 1                       /* BMM350_UPD_OAE_DELAY = 1000 µs */
 #define MAG_MAX_RATE_HZ     400                     /* BMM350 maximum supported ODR */
+#define MAG_DRDY_TIMEOUT_MS     10                  /* 4× the 2.5 ms period at 400 Hz */
+#define MAG_MAX_CONSEC_ERRORS   5                   /* bail out after 5 consecutive I2C failures */
 
 /* OTP calibration read */
 #define MAG_OTP_NUM_WORDS           32
@@ -53,7 +56,8 @@ LOG_MODULE_REGISTER(MAG, CONFIG_LOG_DEFAULT_LEVEL);
 #define MAG_OTP_ADDR_MASK           0x1F
 #define MAG_OTP_STATUS_DONE         0x01
 #define MAG_OTP_STATUS_ERR_MASK     0xE0
-#define MAG_OTP_POLL_MS             1
+#define MAG_OTP_POLL_MS                 1
+#define MAG_OTP_POLL_TIMEOUT_RETRIES    20
 /* OTP data word indices */
 #define MAG_OTP_IDX_TEMP_OFF_SENS   0x0D
 #define MAG_OTP_IDX_OFF_X           0x0E
@@ -110,7 +114,7 @@ static int  Mag_ReadRegister(uint8_t Reg, uint8_t *Data, uint16_t Len);
 static int  Mag_WriteRegister(uint8_t Reg, uint8_t *Data, uint16_t Len);
 static int  Mag_ReadChipId(void);
 static int  Mag_SoftReset(void);
-static int  Mag_SetPmuCmd(uint8_t Cmd);
+static int  Mag_SetPmuCmd(uint8_t Cmd, uint32_t DelayMs);
 static int  Mag_ConfigureInterrupt(void);
 static int32_t Mag_ConvertRaw24Bit(uint8_t Xlsb, uint8_t Lsb, uint8_t Msb);
 static int32_t Mag_FixSign(uint32_t InVal, uint8_t NBits);
@@ -259,15 +263,22 @@ rate will be capped at 400 Hz.
 int Mag_ReadData(MagRawData_t *Data, MagConfig_t *Config)
 {
     int Ret;
-    uint16_t SampleCount = 0;
-    uint16_t TotalSamples = Config->Duration * Config->SamplingRate;
-    uint8_t DataBuf[MAG_DATA_READ_SIZE];
+    uint32_t SampleCount  = 0;
+    uint32_t TotalSamples = (uint32_t)Config->Duration * Config->SamplingRate;
+    uint8_t  ConsecErrors = 0;
+    uint8_t  DataBuf[MAG_DATA_READ_SIZE];
 
     /* Cap at max supported ODR */
     if (Config->SamplingRate > MAG_MAX_RATE_HZ)
     {
-        TotalSamples = Config->Duration * MAG_MAX_RATE_HZ;
+        TotalSamples = (uint32_t)Config->Duration * MAG_MAX_RATE_HZ;
         LOG_WRN("ODR capped to %d Hz (requested %d Hz)", MAG_MAX_RATE_HZ, Config->SamplingRate);
+    }
+
+    if (TotalSamples > MAG_RAW_BUFFER_LEN)
+    {
+        LOG_ERR("Sample count %u exceeds buffer (%d)", TotalSamples, MAG_RAW_BUFFER_LEN);
+        return -EINVAL;
     }
 
     /* Activate sensor in normal (continuous) mode */
@@ -280,14 +291,29 @@ int Mag_ReadData(MagRawData_t *Data, MagConfig_t *Config)
     while (SampleCount < TotalSamples)
     {
         /* Wait for DRDY interrupt */
-        k_sem_take(&m_DataReadySem, K_FOREVER);
+        if (k_sem_take(&m_DataReadySem, K_MSEC(MAG_DRDY_TIMEOUT_MS)) != 0)
+        {
+            LOG_ERR("DRDY timeout at sample %u", SampleCount);
+            Mag_Standby();
+            return -ETIMEDOUT;
+        }
 
         /* Read all 3 axes + temperature (12 bytes: 3 bytes per channel) */
         Ret = Mag_ReadRegister(MAG_REG_MAG_X_XLSB, DataBuf, MAG_DATA_READ_SIZE);
         if (Ret)
         {
+            ConsecErrors++;
+            LOG_ERR("I2C read error at sample %u (%u consecutive)", SampleCount, ConsecErrors);
+            if (ConsecErrors >= MAG_MAX_CONSEC_ERRORS)
+            {
+                LOG_ERR("Too many consecutive I2C errors, aborting");
+                Mag_Standby();
+                return -EIO;
+            }
             continue;
         }
+
+        ConsecErrors = 0;
 
         /* Convert 24-bit raw values — temperature stored in private m_TempBuf, not in public struct */
         Data[SampleCount].XValue  = Mag_ConvertRaw24Bit(DataBuf[0], DataBuf[1], DataBuf[2]);
@@ -299,7 +325,10 @@ int Mag_ReadData(MagRawData_t *Data, MagConfig_t *Config)
     }
 
     /* Return to suspend mode */
-    Mag_Standby();
+    if (Mag_Standby() != 0)
+    {
+        LOG_WRN("Mag_Standby failed after acquisition");
+    }
 
     LOG_DBG("Read %d mag samples", SampleCount);
     return 0;
@@ -314,6 +343,13 @@ Data - Pointer to store the raw XYZ values.
 
 Return:
 int - 0 on success, negative error code on failure.
+
+Note(s):
+Writes only m_TempBuf[0]. Do NOT pass the result to Mag_CalculateRms with
+SampleCount > 1 — indices [1..N-1] of m_TempBuf will contain stale or
+BSS-zero values, producing incorrect temperature compensation.
+Use Mag_ReadData to populate a full multi-sample buffer before calling
+Mag_CalculateRms.
 *******************************************************************************/
 int Mag_ReadRaw(MagRawData_t *Data)
 {
@@ -343,23 +379,36 @@ Argument(s):
 RateHz - Desired ODR in Hz (e.g., 400, 200, 100, 50, 25).
 
 Return:
-None
+int - 0 on success, negative error code on failure.
 *******************************************************************************/
-void Mag_SetOdr(uint16_t RateHz)
+int Mag_SetOdr(uint16_t RateHz)
 {
+    int     Ret;
     uint8_t RegVal;
     uint8_t OdrReg;
 
     OdrReg = Mag_ConvertOdr(RateHz);
     RegVal = MAG_AVG_NO_AVG | OdrReg;
-    Mag_WriteRegister(MAG_REG_PMU_CMD_AGGR_SET, &RegVal, 1);
+    Ret = Mag_WriteRegister(MAG_REG_PMU_CMD_AGGR_SET, &RegVal, 1);
+    if (Ret)
+    {
+        LOG_ERR("Failed to write AGGR_SET register: %d", Ret);
+        return Ret;
+    }
 
     /* Commit new ODR — BMM350 requires UPD_OAE after every AGGR_SET write */
     RegVal = MAG_PMU_CMD_UPD_OAE;
-    Mag_WriteRegister(MAG_REG_PMU_CMD, &RegVal, 1);
+    Ret = Mag_WriteRegister(MAG_REG_PMU_CMD, &RegVal, 1);
+    if (Ret)
+    {
+        LOG_ERR("Failed to write UPD_OAE command: %d", Ret);
+        return Ret;
+    }
+
     k_msleep(MAG_UPD_OAE_WAIT_MS);
 
     LOG_INF("ODR set to %d Hz", RateHz);
+    return 0;
 }
 
 /*******************************************************************************
@@ -374,7 +423,7 @@ int - 0 on success, negative error code on failure.
 *******************************************************************************/
 int Mag_Active(void)
 {
-    return Mag_SetPmuCmd(MAG_PMU_CMD_NORMAL);
+    return Mag_SetPmuCmd(MAG_PMU_CMD_NORMAL, MAG_SUSPEND_TO_NORMAL_WAIT_MS);
 }
 
 /*******************************************************************************
@@ -389,7 +438,7 @@ int - 0 on success, negative error code on failure.
 *******************************************************************************/
 int Mag_Standby(void)
 {
-    return Mag_SetPmuCmd(MAG_PMU_CMD_SUSPEND);
+    return Mag_SetPmuCmd(MAG_PMU_CMD_SUSPEND, MAG_NORMAL_TO_SUSPEND_WAIT_MS);
 }
 
 /*******************************************************************************
@@ -435,12 +484,21 @@ Bosch calibration pipeline per sample before accumulating into RMS:
   7. RMS = sqrt(sum(val^2) / N)
 
 Argument(s):
-Data        - Pointer to array of MagRawData_t samples (XYZ + TValue).
+Data        - Pointer to array of MagRawData_t samples (XYZ only; temperature
+              is read from the private m_TempBuf array, not from this struct).
 SampleCount - Number of samples in the buffer.
 MagRms      - Output: per-axis RMS in compensated microtesla.
 
 Return:
 None
+
+Note(s):
+Reads temperature compensation values from m_TempBuf[0..SampleCount-1].
+m_TempBuf is populated by Mag_ReadData — only index [0] is written by
+Mag_ReadRaw. Calling this function with SampleCount > 1 after Mag_ReadRaw
+will silently use stale or BSS-zero temperature values for indices [1..N-1],
+producing incorrect TCO/TCS compensation. Always use Mag_ReadData to fill
+the buffer before calling this function with SampleCount > 1.
 *******************************************************************************/
 void Mag_CalculateRms(MagRawData_t *Data, uint16_t SampleCount, OutputData_t *MagRms)
 {
@@ -459,7 +517,21 @@ void Mag_CalculateRms(MagRawData_t *Data, uint16_t SampleCount, OutputData_t *Ma
     float    InvN;
     uint16_t Idx;
 
+    if (SampleCount == 0)
+    {
+        LOG_ERR("Mag_CalculateRms called with zero samples");
+        MagRms->XData = 0.0f;
+        MagRms->YData = 0.0f;
+        MagRms->ZData = 0.0f;
+        return;
+    }
+
     CrossDenom = 1.0f - m_MagCal.CrossYX * m_MagCal.CrossXY;
+    if (fabsf(CrossDenom) < 1e-6f)
+    {
+        LOG_ERR("CrossDenom near zero — OTP calibration suspect");
+        CrossDenom = 1.0f;
+    }
 
     for (Idx = 0; Idx < SampleCount; Idx++)
     {
@@ -568,6 +640,12 @@ static int Mag_ReadRegister(uint8_t Reg, uint8_t *Data, uint16_t Len)
     uint8_t RxBuf[MAG_I2C_RX_BUF_SIZE];
     int Ret;
 
+    if (Len > MAG_DATA_READ_SIZE)
+    {
+        LOG_ERR("Mag_ReadRegister: Len %u exceeds buffer (%d)", Len, MAG_DATA_READ_SIZE);
+        return -EINVAL;
+    }
+
     Ret = i2c_write_read(m_I2cDev, MAG_I2C_ADDR, &Reg, 1, RxBuf, Len + MAG_DUMMY_BYTES);
     if (Ret == 0)
     {
@@ -667,7 +745,7 @@ Cmd - Power mode command (MAG_PMU_CMD_SUSPEND, MAG_PMU_CMD_NORMAL, etc.).
 Return:
 int - 0 on success, negative error code on failure.
 *******************************************************************************/
-static int Mag_SetPmuCmd(uint8_t Cmd)
+static int Mag_SetPmuCmd(uint8_t Cmd, uint32_t DelayMs)
 {
     int Ret;
 
@@ -677,7 +755,7 @@ static int Mag_SetPmuCmd(uint8_t Cmd)
         return Ret;
     }
 
-    k_msleep(MAG_PMU_CMD_WAIT_MS);
+    k_msleep(DelayMs);
     return 0;
 }
 
@@ -770,7 +848,7 @@ static int Mag_ReadOtpWord(uint8_t Addr, uint16_t *Word)
     uint8_t Status;
     uint8_t OtpBuf[2];
     int     Ret;
-    int     Timeout = 20;
+    int     Timeout = MAG_OTP_POLL_TIMEOUT_RETRIES;
 
     Ret = Mag_WriteRegister(MAG_REG_OTP_CMD, &Cmd, 1);
     if (Ret)
@@ -843,9 +921,9 @@ static int Mag_LoadCalibration(void)
                (OtpData[MAG_OTP_IDX_OFF_Y] & 0x00FF);
     OffZWord = (OtpData[MAG_OTP_IDX_OFF_Y] & 0x0F00) +
                (OtpData[MAG_OTP_IDX_OFF_Z_SENS_X] & 0x00FF);
-    m_MagCal.OffX = (float)Mag_FixSign(OffXWord, 12) * MAG_UT_PER_LSB_XY;
-    m_MagCal.OffY = (float)Mag_FixSign(OffYWord, 12) * MAG_UT_PER_LSB_XY;
-    m_MagCal.OffZ = (float)Mag_FixSign(OffZWord, 12) * MAG_UT_PER_LSB_Z;
+    m_MagCal.OffX = (float)Mag_FixSign(OffXWord, 12) * MAG_UT_PER_LSB_XY * 0.5f;
+    m_MagCal.OffY = (float)Mag_FixSign(OffYWord, 12) * MAG_UT_PER_LSB_XY * 0.5f;
+    m_MagCal.OffZ = (float)Mag_FixSign(OffZWord, 12) * MAG_UT_PER_LSB_Z  * 0.5f;
 
     /* Sensitivity — 8-bit signed, divide by 256 */
     m_MagCal.SensX = (float)Mag_FixSign((OtpData[MAG_OTP_IDX_OFF_Z_SENS_X] & 0xFF00) >> 8, 8) / 256.0f;

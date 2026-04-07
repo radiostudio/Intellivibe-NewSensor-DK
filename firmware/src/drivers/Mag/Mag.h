@@ -145,7 +145,7 @@ typedef struct
 int   Mag_Init(void);
 int   Mag_ReadData(MagRawData_t *Data, MagConfig_t *Config);
 int   Mag_ReadRaw(MagRawData_t *Data);
-void  Mag_SetOdr(uint16_t RateHz);
+int   Mag_SetOdr(uint16_t RateHz);
 int   Mag_Active(void);
 int   Mag_Standby(void);
 int   Mag_EnableInterrupt(void);
